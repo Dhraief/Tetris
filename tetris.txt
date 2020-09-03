@@ -1,0 +1,1587 @@
+;; game state memory location
+  .equ T_X, 0x1000                  ; falling tetrominoe position on x
+  .equ T_Y, 0x1004                  ; falling tetrominoe position on y
+  .equ T_type, 0x1008               ; falling tetrominoe type
+  .equ T_orientation, 0x100C        ; falling tetrominoe orientation
+  .equ SCORE,  0x1010               ; score
+  .equ GSA, 0x1014                  ; Game State Array starting address
+  .equ SEVEN_SEGS, 0x1198           ; 7-segment display addresses
+  .equ LEDS, 0x2000                 ; LED address
+  .equ RANDOM_NUM, 0x2010           ; Random number generator address
+  .equ BUTTONS, 0x2030              ; Buttons addresses
+
+  ;; type enumeration
+  .equ C, 0x00
+  .equ B, 0x01
+  .equ T, 0x02
+  .equ S, 0x03
+  .equ L, 0x04
+
+  ;; GSA type
+  .equ NOTHING, 0x0
+  .equ PLACED, 0x1
+  .equ FALLING, 0x2
+
+  ;; orientation enumeration
+  .equ N, 0
+  .equ E, 1
+  .equ So, 2
+  .equ W, 3
+  .equ ORIENTATION_END, 4
+
+  ;; collision boundaries
+  .equ COL_X, 4
+  .equ COL_Y, 3
+
+  ;; Rotation enumeration
+  .equ CLOCKWISE, 0
+  .equ COUNTERCLOCKWISE, 1
+
+  ;; Button enumeration
+  .equ moveL, 0x01
+  .equ rotL, 0x02
+  .equ reset, 0x04
+  .equ rotR, 0x08
+  .equ moveR, 0x10
+  .equ moveD, 0x20
+
+  ;; Collision return ENUM
+  .equ W_COL, 0
+  .equ E_COL, 1
+  .equ So_COL, 2
+  .equ OVERLAP, 3
+  .equ NONE, 4
+
+  ;; start location
+  .equ START_X, 6
+  .equ START_Y, 1
+
+  ;; game rate of tetrominoe falling down (in terms of game loop iteration)
+  .equ RATE, 5
+
+  ;; standard limits
+  .equ X_LIMIT, 12
+  .equ Y_LIMIT, 8
+
+
+;; TODO Insert your code here
+;bismillah
+; BEGIN MAIN
+initStackPointer:
+addi sp, zero, LEDS
+main:
+call reset_game
+addi s0, zero, RATE
+
+loop0main:
+   loop1main:
+     beq s0, zero, next0 
+     call draw_gsa
+     call display_score
+     addi a0, zero, NOTHING  
+     call draw_tetromino
+     call wait
+     call get_input
+     beq v0,zero, noaction
+     add a0,zero, v0
+     call act
+    
+     noaction:
+     addi a0, zero, FALLING
+     call draw_tetromino
+     addi s0,s0,-1
+     jmpi loop1main
+
+     next0:
+     addi a0,zero, NOTHING
+     call draw_tetromino
+     addi a0, zero, moveD
+     call act
+     bne  v0,zero, next1
+     addi a0, zero, FALLING
+     call draw_tetromino
+     addi s0, zero, RATE
+     jmpi loop1main  
+
+   next1:
+ 
+   addi a0,zero,PLACED
+   call draw_tetromino 
+
+   removinglines:
+   call detect_full_line
+   addi s1, zero, 8
+   beq v0,s1,nextRemovingLines
+   add a0,v0,zero
+   call remove_full_line
+   call increment_score
+   jmpi removinglines
+
+   nextRemovingLines:
+   call generate_tetromino
+   addi a0,zero, OVERLAP
+   call detect_collision
+   addi s2, zero, NONE
+   bne v0,s2,end_main
+   addi a0, zero, FALLING
+   call draw_tetromino
+   jmpi loop0main
+
+end_main:
+jmpi main
+; END:main
+
+; REAL CODE
+
+; BEGIN:clear_leds
+clear_leds:
+ stw zero, LEDS (zero)
+ stw zero, LEDS+4 (zero)
+ stw zero, LEDS+8 (zero)
+ret
+; END:clear_leds
+
+
+; BEGIN:set_pixel
+set_pixel:
+ srli t1, a0 , 2
+ slli t1, t1, 2    ;t1 address of word
+ andi t2, a0, 3   
+ slli t2, t2 , 3 
+ add t2, t2, a1    ;t2 exact position in word
+ addi t3, zero, 1
+ sll t3, t3, t2
+ ldw t4, LEDS(t1)
+ or t4, t4, t3
+ stw t4, LEDS (t1)
+ret
+; END:set_pixel
+
+; BEGIN:wait
+wait:
+addi t1, zero, 1  
+slli t1, t1 , 20       ;;2 power 20
+loopWait: 
+addi t1, t1, -1 
+bne t1, zero, loopWait
+
+ret
+; END:wait
+
+; BEGIN:in_gsa
+in_gsa:
+cmplti t1, a0, 0
+cmplti t2, a1, 0
+cmpgei t3, a0, 12 
+cmpgei t4, a1, 8
+or v0, t1, t2 
+or v0, v0 ,t3
+or v0, v0, t4
+
+ret
+; END:in_gsa
+
+; BEGIN:get_gsa
+get_gsa:
+; we return the element of 32 bits at position 8x+y starting from GSA
+add t0, a0, zero
+slli t0, t0, 3
+add t0, t0, a1
+slli t0, t0, 2
+ldw v0, GSA(t0)
+
+ret
+; END:get_gsa
+
+; BEGIN:set_gsa
+set_gsa:
+add t0, a0, zero
+slli t0, t0, 3
+add t0, t0, a1
+slli t0,t0, 2
+stw a2, GSA(t0)
+
+ret
+; END:set_gsa
+
+; BEGIN:draw_gsa
+draw_gsa:
+addi sp, sp, -4
+stw s0, 0(sp)
+addi sp, sp, -4
+stw s1, 0(sp)
+addi sp, sp, -4
+stw s7, 0(sp)
+
+addi t0, zero, 0             ;counter
+addi t1, zero, 96            ;limit of gsa
+addi s0, zero, NOTHING       ;fixed value of NOTHING
+
+;we store in LEDS word (t0/32)*4 at position exactly (t0%32) // Remember: log2(32) = 5
+
+loopOverGsa:
+  beq t0, t1, endDrawGsa
+  srli s1, t0, 5    
+  slli s1, s1 , 2          ;s1 word in leds 
+  andi t4, t0, 0x1F        ;t4 exact position to be updated
+  slli s7, t0, 2           ;s7 word in gsa
+  ldw t3, LEDS(s1)
+  ldw t2, GSA(s7)
+  
+  beq t2, s0, setLEDtoZero
+   ;here we set LED to one
+   addi t7, zero, 1
+   sll t7, t7 , t4
+   or t5, t3, t7    ;t5 is the new LED word
+   stw t5, LEDS(s1)
+  jmpi nextDrawGsa
+  setLEDtoZero:
+   addi t7, zero, 1
+   sll t7, t7 , t4
+   nor t7, t7, zero
+   and t5, t3, t7
+   stw t5, LEDS(s1)
+ nextDrawGsa:
+ addi t0, t0 , 1
+ jmpi loopOverGsa
+
+endDrawGsa:
+ldw s7, 0(sp)
+addi sp, sp, 4
+ldw s1, 0(sp)
+addi sp, sp, 4
+ldw s0, 0(sp)
+addi sp, sp, 4
+ret
+; END:draw_gsa
+
+; BEGIN:draw_tetromino
+draw_tetromino:
+addi sp, sp, -4
+stw s0, 0(sp)
+addi sp, sp, -4
+stw s1, 0(sp)
+addi sp, sp, -4
+stw s2, 0(sp)
+addi sp, sp, -4
+stw s3, 0(sp)
+addi sp, sp, -4
+stw s4, 0(sp)
+addi sp, sp, -4
+stw s5, 0(sp)
+addi sp, sp, -4
+stw s6, 0(sp)
+addi sp, sp, -4
+stw s7, 0(sp)
+
+ldw s2, T_X(zero)
+ldw s3, T_Y(zero)
+ldw s4, T_type(zero)
+ldw s5, T_orientation(zero)
+
+add s0, zero, a0    ; keep initial value of a0
+add s7, zero, ra    ; keep initial value of ra
+
+;we have T_type, T_orientation, T_X, T_Y and a0(falling,...)
+;we need to set_gsa using a2=a0, a0=x and a1=y
+add a0, zero, s2
+add a1, zero, s3
+add a2, zero, s0
+call set_gsa
+; now for the other pixels we take words from DrawAx and DrawAy using formula : 4*TYPE + ORIENTATION
+add t1, zero, s4
+slli t1, t1, 2
+add t1, t1, s5
+slli t1, t1, 2
+ldw t2, DRAW_Ax(t1)
+ldw t3, DRAW_Ay(t1)
+; t2 and t3 are addresses to the first pair (t2 for x and t3 for y) 
+; let's iterate over 3 pairs
+
+ldw t6, 0(t2)   ;t6 = x to add (or sub)
+ldw t7, 0(t3)   ;t7 = y to add (or sub)
+add a0, t6, s2
+add a1, t7, s3 
+add a2, zero, s0
+
+;NEED TO SAVE T2 AND T3
+addi sp, sp, -4
+stw t2, 0(sp)
+addi sp, sp, -4
+stw t3, 0(sp)
+call set_gsa
+ldw t3, 0(sp)
+addi sp, sp, 4
+ldw t2, 0(sp)
+addi sp, sp, 4
+;NEED TO SAVE T2 AND T3
+
+;copy with setting offset to 4
+ldw t6, 4(t2)   ;t6 = x to add (or sub)
+ldw t7, 4(t3)   ;t7 = y to add (or sub)
+add a0, t6, s2
+add a1, t7, s3 
+add a2, zero, s0
+
+;NEED TO SAVE T2 AND T3
+addi sp, sp, -4
+stw t2, 0(sp)
+addi sp, sp, -4
+stw t3, 0(sp)
+call set_gsa
+ldw t3, 0(sp)
+addi sp, sp, 4
+ldw t2, 0(sp)
+addi sp, sp, 4
+;NEED TO SAVE T2 AND T3
+
+;copy with setting offset to 8
+ldw t6, 8(t2)   ;t6 = x to add (or sub)
+ldw t7, 8(t3)   ;t7 = y to add (or sub)
+add a0, t6, s2 
+add a1, t7, s3 
+add a2, zero, s0
+call set_gsa
+; the end
+
+add a0, zero, s0 
+add ra, zero, s7
+
+ldw s7, 0(sp)
+addi sp, sp, 4
+ldw s6, 0(sp)
+addi sp, sp, 4
+ldw s5, 0(sp)
+addi sp, sp, 4
+ldw s4, 0(sp)
+addi sp, sp, 4
+ldw s3, 0(sp)
+addi sp, sp, 4
+ldw s2, 0(sp)
+addi sp, sp, 4
+ldw s1, 0(sp)
+addi sp, sp, 4
+ldw s0, 0(sp)
+addi sp, sp, 4
+ret
+; END:draw_tetromino
+
+; BEGIN:generate_tetromino
+generate_tetromino:
+
+generate:
+  ldw t1, RANDOM_NUM(zero)
+  andi t1, t1 , 7
+  cmplti t2, t1, 5 ; t1=1 if t1<5 
+  beq t2, zero, generate 
+
+stw t1, T_type(zero)  
+addi t3, zero, 6 
+stw t3, T_X(zero)  
+addi t3, zero, 1 
+stw t3, T_Y(zero) 
+stw zero , T_orientation(zero) ; N = 0
+ret
+; END:generate_tetromino
+
+; BEGIN:detect_collision
+
+detect_collision:
+addi sp, sp, -4
+stw s0, 0(sp)
+addi sp, sp, -4
+stw s1, 0(sp)
+addi sp, sp, -4
+stw s2, 0(sp)
+addi sp, sp, -4
+stw s3, 0(sp)
+addi sp, sp, -4
+stw s4, 0(sp)
+addi sp, sp, -4
+stw s5, 0(sp)
+addi sp, sp, -4
+stw s6, 0(sp)
+addi sp, sp, -4
+stw s7, 0(sp)
+
+add s6, zero, a0
+add s2, zero, ra
+
+addi s3, zero, 0  ; s3 = 0
+ldw t0, T_X(zero) ; t0 = x
+ldw t1, T_Y(zero) ; t1 = y
+addi s7, zero, W_COL
+beq a0, s7, w_collision 
+addi s7, zero, E_COL
+beq a0, s7, e_collision
+addi s7, zero, So_COL
+beq a0, s7, s_collision
+addi s7, zero, OVERLAP
+beq a0, s7, overlapping  
+w_collision:
+addi t0, t0, -1 
+jmpi verif_anchor
+e_collision:
+addi t0, t0, 1 
+jmpi verif_anchor
+s_collision:
+addi t1,t1,1
+jmpi verif_anchor
+overlapping:
+jmpi verif_anchor
+ 
+verif_anchor:
+add a0,t0, zero
+add a1,t1, zero
+
+;SHOULD SAVE T0 AND T1
+addi sp, sp, -4
+stw t0, 0(sp)
+addi sp, sp, -4
+stw t1, 0(sp)
+;SHOULD SAVE T0 AND T1
+call in_gsa
+;GET T0 AND T1
+ldw t1, 0(sp)
+addi sp, sp, 4
+ldw t0, 0(sp)
+addi sp, sp, 4
+;GET T0 AND T1
+
+add s3, zero, v0
+bne s3,zero, set_col
+; here s3 = 0 (anchor inside gsa)
+
+;SHOULD SAVE T0 AND T1
+addi sp, sp, -4
+stw t0, 0(sp)
+addi sp, sp, -4
+stw t1, 0(sp)
+;SHOULD SAVE T0 AND T1
+call get_gsa 
+;GET T0 AND T1
+ldw t1, 0(sp)
+addi sp, sp, 4
+ldw t0, 0(sp)
+addi sp, sp, 4
+;GET T0 AND T1
+
+addi s7, zero, PLACED
+bne v0, s7, verif_pairs 
+addi s3, zero, 1
+jmpi set_col 
+
+verif_pairs:
+; now for the other pixels we take words from DrawAx and DrawAy using formula : 4*TYPE + ORIENTATION
+
+;first pair
+ldw s0, T_type(zero)
+ldw s1, T_orientation(zero)
+add t3, zero, s0
+slli t3, t3, 2
+add t3, t3, s1
+slli t3, t3, 2
+ldw t4, DRAW_Ax(t3)
+ldw t5, DRAW_Ay(t3)
+ldw s4, 0(t4)
+ldw s5, 0(t5)
+add a0, t0, s4
+add a1, t1, s5
+
+;SHOULD SAVE T0 AND T1
+addi sp, sp, -4
+stw t0, 0(sp)
+addi sp, sp, -4
+stw t1, 0(sp)
+;SHOULD SAVE T0 AND T1
+call in_gsa
+;GET T0 AND T1
+ldw t1, 0(sp)
+addi sp, sp, 4
+ldw t0, 0(sp)
+addi sp, sp, 4
+;GET T0 AND T1
+
+add s3, zero, v0
+bne s3,zero, set_col
+; here s3 = 0 (no collision)
+
+;SHOULD SAVE T0 AND T1
+addi sp, sp, -4
+stw t0, 0(sp)
+addi sp, sp, -4
+stw t1, 0(sp)
+;SHOULD SAVE T0 AND T1
+call get_gsa 
+;GET T0 AND T1
+ldw t1, 0(sp)
+addi sp, sp, 4
+ldw t0, 0(sp)
+addi sp, sp, 4
+;GET T0 AND T1
+
+addi s7, zero, PLACED 
+bne v0, s7, verif_pair2 
+addi s3, zero, 1
+jmpi set_col
+
+;second pair
+verif_pair2:
+ldw s0, T_type(zero)
+ldw s1, T_orientation(zero)
+add t3, zero, s0
+slli t3, t3, 2
+add t3, t3, s1
+slli t3, t3, 2
+ldw t4, DRAW_Ax(t3)
+ldw t5, DRAW_Ay(t3)
+ldw s4, 4(t4)
+ldw s5, 4(t5)
+add a0, t0, s4
+add a1, t1, s5
+
+;SHOULD SAVE T0 AND T1
+addi sp, sp, -4
+stw t0, 0(sp)
+addi sp, sp, -4
+stw t1, 0(sp)
+;SHOULD SAVE T0 AND T1
+call in_gsa
+;GET T0 AND T1
+ldw t1, 0(sp)
+addi sp, sp, 4
+ldw t0, 0(sp)
+addi sp, sp, 4
+;GET T0 AND T1
+
+add s3, zero, v0
+bne s3,zero, set_col
+; here s3 = 0 (no collision)
+
+;SHOULD SAVE T0 AND T1
+addi sp, sp, -4
+stw t0, 0(sp)
+addi sp, sp, -4
+stw t1, 0(sp)
+;SHOULD SAVE T0 AND T1
+call get_gsa 
+;GET T0 AND T1
+ldw t1, 0(sp)
+addi sp, sp, 4
+ldw t0, 0(sp)
+addi sp, sp, 4
+;GET T0 AND T1
+
+addi s7, zero, PLACED
+bne v0, s7, verif_pair3
+addi s3, zero, 1
+jmpi set_col
+
+;third pair
+verif_pair3:
+ldw s0, T_type(zero)
+ldw s1, T_orientation(zero)
+add t3, zero, s0
+slli t3, t3, 2
+add t3, t3, s1
+slli t3, t3, 2
+ldw t4, DRAW_Ax(t3)
+ldw t5, DRAW_Ay(t3)
+ldw s4, 8(t4)
+ldw s5, 8(t5)
+add a0, t0, s4
+add a1, t1, s5
+
+;SHOULD SAVE T0 AND T1
+addi sp, sp, -4
+stw t0, 0(sp)
+addi sp, sp, -4
+stw t1, 0(sp)
+;SHOULD SAVE T0 AND T1
+call in_gsa
+;GET T0 AND T1
+ldw t1, 0(sp)
+addi sp, sp, 4
+ldw t0, 0(sp)
+addi sp, sp, 4
+;GET T0 AND T1
+
+add s3, zero, v0 
+bne s3,zero, set_col
+; here s3 = 0 (no collision)
+
+;SHOULD SAVE T0 AND T1
+addi sp, sp, -4
+stw t0, 0(sp)
+addi sp, sp, -4
+stw t1, 0(sp)
+;SHOULD SAVE T0 AND T1
+call get_gsa 
+;GET T0 AND T1
+ldw t1, 0(sp)
+addi sp, sp, 4
+ldw t0, 0(sp)
+addi sp, sp, 4
+;GET T0 AND T1
+
+addi s7, zero, PLACED
+bne v0, s7, set_col
+addi s3, zero, 1
+jmpi set_col
+
+
+set_col:
+beq s3, zero, noneCollision
+add v0, s6 ,zero
+jmpi endDetectCollision
+
+noneCollision:
+addi v0,zero, NONE
+
+endDetectCollision:
+add a0, zero, s6
+add ra, zero, s2
+
+ldw s7, 0(sp)
+addi sp, sp, 4
+ldw s6, 0(sp)
+addi sp, sp, 4
+ldw s5, 0(sp)
+addi sp, sp, 4
+ldw s4, 0(sp)
+addi sp, sp, 4
+ldw s3, 0(sp)
+addi sp, sp, 4
+ldw s2, 0(sp)
+addi sp, sp, 4
+ldw s1, 0(sp)
+addi sp, sp, 4
+ldw s0, 0(sp)
+addi sp, sp, 4
+ret
+; END:detect_collision
+
+; BEGIN:rotate_tetromino
+rotate_tetromino:
+addi t0, zero, rotL
+addi t1, zero, rotR
+ldw t2, T_orientation(zero)
+
+beq a0, t1, rotateRight
+;here rotateLeft
+addi t2, t2, -1
+andi t2, t2, 3         ;(orientation-1)%4
+jmpi endRotateTetromino
+
+rotateRight:
+addi t2, t2, 1
+andi t2, t2, 3          ;(orientation+1)%4
+
+endRotateTetromino:
+stw t2, T_orientation(zero)
+ret
+; END:rotate_tetromino
+
+
+
+; BEGIN:act
+act:
+; saving registers s0 to s7
+addi sp, sp, -32
+stw s0, 28(sp)
+stw s1, 24(sp)
+stw s2, 20(sp)
+stw s3, 16(sp)
+stw s4, 12(sp)
+stw s5, 8(sp)
+stw s6, 4(sp)
+stw s7, 0(sp)
+
+;initializing and saving a0 in s0 and ra in s2
+add  s0, zero, a0
+add  s2, zero, ra
+
+addi s1, zero, NONE  ;s1 = NONE
+addi v1, zero, 1     ;V1 = 1 (for failed act)
+
+addi t1, zero, moveR
+addi t2, zero, moveD
+addi t3, zero, rotR
+addi t4, zero, rotL
+addi t5, zero, reset
+
+beq a0, t5, resetThis
+beq a0, t4, rotLeft
+beq a0, t3, rotRight
+beq a0, t1, moveRight
+beq a0, t2, moveDown
+;otherwise move left
+
+moveLeft:
+addi a0, zero, W_COL
+call detect_collision
+addi v1, zero, 1         ;v1 = 1 (for failed act)
+bne v0, s1, endAct
+addi v1, zero, 0         ;v1 = 0 (for successful act)
+ldw t7, T_X(zero)
+addi t7, t7, -1
+stw t7, T_X(zero)
+
+jmpi endAct
+
+moveDown:
+addi a0, zero, So_COL
+call detect_collision
+addi v1, zero, 1         ;v1 = 1 (for failed act)
+bne v0, s1, endAct
+addi v1, zero, 0         ;v1 = 0 (for successful act)
+ldw t7, T_Y(zero)
+addi t7, t7, 1
+stw t7, T_Y(zero)
+
+jmpi endAct
+
+moveRight:
+addi a0, zero, E_COL
+call detect_collision
+addi v1, zero, 1         ;v1 = 1 (for failed act)
+bne v0, s1, endAct
+addi v1, zero, 0         ;v1 = 0 (for successful act)
+ldw t7, T_X(zero)
+addi t7, t7, 1
+stw t7, T_X(zero)
+
+jmpi endAct
+
+rotRight:
+addi v1, zero, 0     ;v1= 0 (for successful act)
+ldw s5, T_X(zero)
+ldw s6, T_Y(zero)
+ldw s7, T_orientation(zero)
+
+; we save them because we might not change anything at the end (with procedure doNotChangeAnything)
+addi a0, zero, rotR
+call rotate_tetromino
+addi a0, zero, OVERLAP
+call detect_collision
+addi v1, zero, 0     ;v1= 0 (for successful act)
+beq v0, s1, endAct
+
+;we represent the x of the anchor with t6
+ldw t6, T_X(zero)
+cmplti t0, t6, 6
+bne t0, zero, itIsAtLeft
+
+; here it is >=6 (at right)
+addi t6, t6, -1
+stw t6, T_X(zero)
+addi a0, zero, OVERLAP
+call detect_collision
+addi v1, zero, 0     ;v1= 0 (for successful act)
+beq v0, s1, endAct
+;here we shifted once but still have collision
+ldw t6, T_X(zero)
+addi t6, t6, -1
+stw t6, T_X(zero)
+addi a0, zero, OVERLAP
+call detect_collision
+addi v1, zero, 0     ;v1= 0 (for successful act)
+beq v0, s1, endAct
+; no way we always have overlap
+jmpi doNotChangeAnything
+
+rotLeft:
+addi v1, zero, 0     ;v1= 0 (for successful act)
+ldw s5, T_X(zero)
+ldw s6, T_Y(zero)
+ldw s7, T_orientation(zero)
+
+; we save them because we might not change anything at the end (with procedure doNotChangeAnything)
+addi a0, zero, rotL
+call rotate_tetromino
+addi a0, zero, OVERLAP
+call detect_collision
+addi v1, zero, 0     ;v1= 0 (for successful act)
+beq v0, s1, endAct
+
+;we represent the x of the anchor with t6
+ldw t6, T_X(zero)
+cmplti t0, t6, 6
+bne t0, zero, itIsAtLeft
+
+; here it is >=6 (at right)
+addi t6, t6, -1
+stw t6, T_X(zero)
+addi a0, zero, OVERLAP
+call detect_collision
+addi v1, zero, 0     ;v1= 0 (for successful act)
+beq v0, s1, endAct
+;here we shifted once but still have collision
+ldw t6, T_X(zero)
+addi t6, t6, -1
+stw t6, T_X(zero)
+addi a0, zero, OVERLAP
+call detect_collision
+addi v1, zero, 0     ;v1= 0 (for successful act)
+beq v0, s1, endAct
+; no way we always have overlap
+jmpi doNotChangeAnything
+
+resetThis:
+call reset_game
+addi v1, zero, 0
+jmpi endAct
+
+itIsAtLeft:
+; here it is < (at left)
+addi t6, t6, 1
+stw t6, T_X(zero)
+addi a0, zero, OVERLAP
+call detect_collision
+addi v1, zero, 0     ;v1= 0 (for successful act)
+beq v0, s1, endAct
+;here we shifted once but still have collision
+ldw t6, T_X(zero)
+addi t6, t6, 1
+stw t6, T_X(zero)
+addi a0, zero, OVERLAP
+call detect_collision
+addi v1, zero, 0     ;v1= 0 (for successful act)
+beq v0, s1, endAct
+; no way we always have overlap
+jmpi doNotChangeAnything
+
+doNotChangeAnything:
+stw s5, T_X(zero)
+stw s6, T_Y(zero)
+stw s7, T_orientation(zero)
+addi v1, zero, 1
+jmpi endAct
+
+endAct:
+add v0, zero, v1
+add a0, zero, s0
+add ra, zero, s2
+ldw s7, 0(sp)
+addi sp, sp, 4
+ldw s6, 0(sp)
+addi sp, sp, 4
+ldw s5, 0(sp)
+addi sp, sp, 4
+ldw s4, 0(sp)
+addi sp, sp, 4
+ldw s3, 0(sp)
+addi sp, sp, 4
+ldw s2, 0(sp)
+addi sp, sp, 4
+ldw s1, 0(sp)
+addi sp, sp, 4
+ldw s0, 0(sp)
+addi sp, sp, 4
+ret
+; END:act
+
+
+; BEGIN:get_input
+get_input:
+
+add v0,zero,zero 
+addi t5, zero, BUTTONS ; t5 contains BUTTONS address
+ldw t0, 4 (t5)          ;t0 contains edgecapture
+addi t1, zero, 1        ;t1 =  mask
+
+first_one:
+and t2, t0, t1
+slli t1,t1,1 
+beq t2, zero, second_one 
+addi v0, zero, moveL 
+jmpi end_get_input
+
+second_one:
+and t2, t0, t1
+slli t1,t1,1 
+beq t2, zero, third_one 
+addi v0, zero, rotL
+jmpi end_get_input
+
+third_one:
+and t2, t0, t1
+slli t1,t1,1 
+beq t2, zero, fourth_one 
+addi v0, zero, reset 
+jmpi end_get_input
+
+fourth_one:
+and t2, t0, t1
+slli t1,t1,1 
+beq t2, zero, fifth_one 
+addi v0, zero, rotR 
+jmpi end_get_input
+
+fifth_one:
+and t2, t0, t1
+slli t1,t1,1 
+beq t2, zero, end_get_input 
+addi v0, zero, moveR
+jmpi end_get_input
+
+end_get_input: 
+addi t3, zero, 0xFFFFFFFF
+slli t3, t3, 5
+and t3, t3, t0
+stw t3, 4(t5)
+
+ret
+; END:get_input
+
+; BEGIN:detect_full_line
+detect_full_line:
+addi sp, sp, -4
+stw ra, 0(sp)
+
+addi t0,zero,0           ;t0 counter on x
+addi t1,zero,0           ;t1 counter on y
+addi t2,zero,8           ;t2 == 8 limit on y
+addi t3, zero, 12        ;t3 == 12 limit on x
+addi t4, zero, PLACED    ; t4 == PLACED
+
+loop_y:
+beq t1,t2, end_detect_full_line
+
+  loop_x:
+   beq t0,t3, end_detect_full_line
+   add a0, t0, zero
+   add a1, t1,zero
+
+   ; WE SAVE T0 to T4 
+   addi sp, sp, -20
+   stw t0, 16(sp)
+   stw t1, 12(sp)
+   stw t2, 8(sp)
+   stw t3, 4(sp)
+   stw t4, 0(sp)
+
+   call get_gsa
+
+   ldw t4, 0(sp)
+   ldw t3, 4(sp)
+   ldw t2, 8(sp)
+   ldw t1, 12(sp)
+   ldw t0, 16 (sp)
+   addi sp, sp, 20
+   ; WE SAVE T0 to T4
+
+   bne v0,t4, increment_y
+   addi t0,t0,1
+   jmpi loop_x
+
+ increment_y:
+ addi t1,t1,1
+ add t0, zero, zero
+ jmpi loop_y
+
+end_detect_full_line:
+add v0, t1, zero
+
+ldw ra, 0(sp)
+addi sp, sp, 4
+ret
+; END:detect_full_line 
+; BEGIN:helper
+set_all:
+; a0 = y / a1= the value to affect to the line a0
+addi sp, sp, -8
+stw a0, 4(sp)
+stw ra, 0(sp)
+
+add a2,zero,a1  ; a2 <= a1 the value to affect
+addi t1,zero, 12
+add a1, zero,a0 ; a1 <= a0 the line y
+add a0,zero,zero ; a0<=0 counter of x from 0 to 11
+
+loop_helper:
+  beq a0,t1, end_helper ; if a0==12 branch 
+
+  addi sp, sp, -16
+  stw a2, 12(sp)
+  stw t1, 8(sp)
+  stw a0, 4(sp)
+  stw a1, 0(sp)
+ 
+  call set_gsa ; set to (x counter ,y the line to affect) the value a2 :
+
+  ldw a1, 0(sp)
+  ldw a0, 4(sp)
+  ldw t1, 8(sp)
+  ldw a2, 12(sp)
+  addi sp, sp, 16
+
+  addi a0,a0,1 
+  
+  jmpi loop_helper 
+
+end_helper:
+ldw ra, 0(sp)
+ldw a0, 4(sp) 
+addi sp, sp, 8
+ret
+; END SET ALL 
+
+
+;BEGIN BLINK
+; arg: a0: the line Y that should blink 
+blink:
+addi sp, sp, -8
+stw a0, 4(sp)
+stw ra, 0(sp)
+
+addi a1,zero,PLACED
+
+addi sp,sp,-4
+stw a0, 0(sp)
+
+call set_all
+call draw_gsa 
+call wait 
+
+ldw a0, 0(sp)
+addi sp,sp,4
+
+
+
+addi a1,zero,NOTHING 
+call set_all
+call draw_gsa 
+call wait 
+
+ldw ra, 0(sp)
+ldw a0, 4(sp)
+addi sp, sp, 8
+ret
+;END BLINK
+
+move_down:
+; arg: a0>0 is a line Y 
+; affects the values in the GSA of the line a0-1 to a0
+addi sp, sp, -8
+stw s0, 4(sp)
+stw ra, 0(sp)
+
+add s0, a0, zero ; s0 is the y input 
+add t0,zero,zero ; counter on x
+addi t1,zero,12
+
+loop_x_moveDown:
+
+beq t0,t1, end_move_down 
+addi a1, s0,-1 ;a1=y-1
+add a0, t0,zero ;a0<=x
+
+addi sp, sp, -8
+stw t0, 4(sp)
+stw t1, 0(sp)
+
+call get_gsa 
+
+ldw t1, 0(sp) 
+ldw t0, 4(sp)
+addi sp, sp, 8
+
+add a2,v0,zero ;a2<= la valeur de la case sup: v0
+add a1,s0,zero ;a1<=y
+add a0,zero,t0 ;a0<=x
+
+addi sp, sp, -8
+stw t0, 4(sp)
+stw t1, 0(sp)
+
+call set_gsa
+ 
+ldw t1, 0(sp) 
+ldw t0, 4(sp)
+addi sp, sp, 8
+
+
+addi t0,t0,1
+jmpi loop_x_moveDown
+
+end_move_down:
+
+ldw ra, 0(sp)
+ldw s0, 4(sp)
+addi sp, sp, 8
+
+ret
+; END MOVE DOWN 
+
+; END:helper 
+
+; BEGIN:remove_full_line
+remove_full_line:
+;arg: a0 line to delete 
+addi sp, sp, -8
+stw a0, 4(sp)
+stw ra, 0(sp)
+ 
+addi sp, sp, -4
+stw a0, 0(sp)
+
+; first time off
+add a1, zero, zero
+call set_all
+call draw_gsa 
+call wait 
+;blinking twice;
+ldw a0, 0(sp)
+addi sp, sp, 4
+
+addi sp, sp, -4
+stw a0, 0(sp)
+
+call blink
+
+ldw a0, 0(sp)
+addi sp, sp, 4
+
+addi sp, sp, -4
+stw a0, 0(sp)
+
+call blink
+
+
+; moving the other lines
+ldw a0, 0(sp)
+addi sp, sp, 4
+
+
+;remove all the lines down starting from 1 
+loop_y_remove:
+
+beq a0,zero, end_remove_full
+
+addi sp, sp, -4
+stw a0, 0(sp)
+
+call move_down 
+
+ldw a0, 0(sp)
+addi sp, sp, 4
+
+addi a0,a0,-1
+
+jmpi loop_y_remove
+
+end_remove_full:
+;line 0 will become always 0 
+add a0,zero,zero
+add a1,zero,zero 
+call set_all
+
+ldw ra, 0(sp)
+ldw a0, 4(sp)
+addi sp, sp, 8
+ret
+; END:remove_full_line
+
+; BEGIN:increment_score
+increment_score:
+ldw t0, SCORE(zero)
+addi t0,t0,1
+stw t0, SCORE(zero)
+ret
+; END:increment_score
+
+; BEGIN:display_score
+display_score:
+; save s registers
+addi sp, sp, -20
+stw s0, 16 (sp)
+stw s1, 12(sp)
+stw s2, 8(sp)
+stw s3, 4(sp)
+stw s6, 0(sp)
+
+ldw t0, SCORE(zero)
+
+findSeg0: 
+ addi t6, zero, 0 ;t6 is the value of seg0
+  loopSeg0: 
+   cmplti t7, t0, 1000
+   bne t7,zero, valueSeg0
+   addi t0, t0, -1000
+   addi t6,t6,1
+   jmpi loopSeg0
+
+  valueSeg0:
+  add s0, zero, t6
+  slli s0, s0, 2
+  ldw s0, font_data(s0)
+
+findSeg1:
+ addi t6, zero, 0 ;t6 is the value of seg1
+  loopSeg1: 
+   cmplti t7, t0, 100
+   bne t7,zero, valueSeg1
+   addi t0,t0, -100
+   addi t6,t6,1
+   jmpi loopSeg1
+
+  valueSeg1:
+  add s1, zero, t6
+  slli s1, s1, 2
+  ldw s1, font_data(s1)
+
+findSeg2: 
+  addi t6, zero, 0 ;t6 is the value of seg2
+   loopSeg2: 
+    cmplti t7, t0, 10
+    bne t7,zero, valueSeg2
+    addi t0,t0, -10
+    addi t6,t6,1
+    jmpi loopSeg2
+
+   valueSeg2:
+   add s2, zero, t6
+   slli s2, s2, 2
+   ldw s2, font_data(s2)
+
+findSeg3:
+ add s3, zero, t0
+ slli s3, s3, 2
+ ldw s3, font_data(s3)
+
+; s0 | s1 | s2 | s3
+addi s6, zero, SEVEN_SEGS
+stw s0, 0(s6)
+stw s1, 4(s6)
+stw s2, 8(s6)
+stw s3, 12(s6)
+
+endDisplayScore:
+ldw s6, 0(sp)
+ldw s3, 4(sp)
+ldw s2, 8(sp)
+ldw s1, 12(sp)
+ldw s0, 16(sp)
+addi sp, sp, 20
+ret
+; END:display_score
+; BEGIN:reset_game
+reset_game:
+
+;store ra in stack
+addi sp, sp, -4
+stw ra, 0(sp)
+
+;set score to zero
+addi t0, zero, SCORE
+stw zero,0 (t0)
+call display_score
+
+addi a0,zero,11     ;a0 = x
+addi a1,zero,7      ; a1 = y
+
+;SETTING EVERYTHING TO 0
+loop_y_reset:
+blt a1,zero , end_reset
+
+ loop_x_reset:
+  blt a0,zero, increment_y_reset
+
+  addi sp,sp,-8
+  stw a0, 4(sp) 
+  stw a1, 0(sp)    
+  addi a2,zero,NOTHING
+
+  call set_gsa
+
+  ldw a1,0 (sp)
+  ldw a0,4 (sp)
+  addi sp,sp,8
+
+  addi a0,a0,-1
+  jmpi loop_x_reset
+
+increment_y_reset:
+addi a0,zero,11 
+addi a1,a1,-1
+jmpi loop_y_reset
+
+
+end_reset:
+;GENERATING AND DRAWING
+call generate_tetromino
+addi a0,zero, FALLING
+call draw_tetromino
+call draw_gsa
+
+
+ldw ra, 0(sp)
+addi sp, sp, 4
+ret
+
+; END:reset_game
+
+
+
+
+
+
+
+
+
+font_data:
+    .word 0xFC  ; 0
+    .word 0x60  ; 1
+    .word 0xDA  ; 2
+    .word 0xF2  ; 3
+    .word 0x66  ; 4
+    .word 0xB6  ; 5
+    .word 0xBE  ; 6
+    .word 0xE0  ; 7
+    .word 0xFE  ; 8
+    .word 0xF6  ; 9
+
+C_N_X:
+  .word 0x00
+  .word 0xFFFFFFFF
+  .word 0xFFFFFFFF
+
+C_N_Y:
+  .word 0xFFFFFFFF
+  .word 0x00
+  .word 0xFFFFFFFF
+
+C_E_X:
+  .word 0x01
+  .word 0x00
+  .word 0x01
+
+C_E_Y:
+  .word 0x00
+  .word 0xFFFFFFFF
+  .word 0xFFFFFFFF
+
+C_So_X:
+  .word 0x01
+  .word 0x00
+  .word 0x01
+
+C_So_Y:
+  .word 0x00
+  .word 0x01
+  .word 0x01
+
+C_W_X:
+  .word 0xFFFFFFFF
+  .word 0x00
+  .word 0xFFFFFFFF
+
+C_W_Y:
+  .word 0x00
+  .word 0x01
+  .word 0x01
+
+B_N_X:
+  .word 0xFFFFFFFF
+  .word 0x01
+  .word 0x02
+
+B_N_Y:
+  .word 0x00
+  .word 0x00
+  .word 0x00
+
+B_E_X:
+  .word 0x00
+  .word 0x00
+  .word 0x00
+
+B_E_Y:
+  .word 0xFFFFFFFF
+  .word 0x01
+  .word 0x02
+
+B_So_X:
+  .word 0xFFFFFFFE
+  .word 0xFFFFFFFF
+  .word 0x01
+
+B_So_Y:
+  .word 0x00
+  .word 0x00
+  .word 0x00
+
+B_W_X:
+  .word 0x00
+  .word 0x00
+  .word 0x00
+
+B_W_Y:
+  .word 0xFFFFFFFE
+  .word 0xFFFFFFFF
+  .word 0x01
+
+T_N_X:
+  .word 0xFFFFFFFF
+  .word 0x00
+  .word 0x01
+
+T_N_Y:
+  .word 0x00
+  .word 0xFFFFFFFF
+  .word 0x00
+
+T_E_X:
+  .word 0x00
+  .word 0x01
+  .word 0x00
+
+T_E_Y:
+  .word 0xFFFFFFFF
+  .word 0x00
+  .word 0x01
+
+T_So_X:
+  .word 0xFFFFFFFF
+  .word 0x00
+  .word 0x01
+
+T_So_Y:
+  .word 0x00
+  .word 0x01
+  .word 0x00
+
+T_W_X:
+  .word 0x00
+  .word 0xFFFFFFFF
+  .word 0x00
+
+T_W_Y:
+  .word 0xFFFFFFFF
+  .word 0x00
+  .word 0x01
+
+S_N_X:
+  .word 0xFFFFFFFF
+  .word 0x00
+  .word 0x01
+
+S_N_Y:
+  .word 0x00
+  .word 0xFFFFFFFF
+  .word 0xFFFFFFFF
+
+S_E_X:
+  .word 0x00
+  .word 0x01
+  .word 0x01
+
+S_E_Y:
+  .word 0xFFFFFFFF
+  .word 0x00
+  .word 0x01
+
+S_So_X:
+  .word 0x01
+  .word 0x00
+  .word 0xFFFFFFFF
+
+S_So_Y:
+  .word 0x00
+  .word 0x01
+  .word 0x01
+
+S_W_X:
+  .word 0x00
+  .word 0xFFFFFFFF
+  .word 0xFFFFFFFF
+
+S_W_Y:
+  .word 0x01
+  .word 0x00
+  .word 0xFFFFFFFF
+
+L_N_X:
+  .word 0xFFFFFFFF
+  .word 0x01
+  .word 0x01
+
+L_N_Y:
+  .word 0x00
+  .word 0x00
+  .word 0xFFFFFFFF
+
+L_E_X:
+  .word 0x00
+  .word 0x00
+  .word 0x01
+
+L_E_Y:
+  .word 0xFFFFFFFF
+  .word 0x01
+  .word 0x01
+
+L_So_X:
+  .word 0xFFFFFFFF
+  .word 0x01
+  .word 0xFFFFFFFF
+
+L_So_Y:
+  .word 0x00
+  .word 0x00
+  .word 0x01
+
+L_W_X:
+  .word 0x00
+  .word 0x00
+  .word 0xFFFFFFFF
+
+L_W_Y:
+  .word 0x01
+  .word 0xFFFFFFFF
+  .word 0xFFFFFFFF
+
+DRAW_Ax:                        ; address of shape arrays, x axis
+    .word C_N_X
+    .word C_E_X
+    .word C_So_X
+    .word C_W_X
+    .word B_N_X
+    .word B_E_X
+    .word B_So_X
+    .word B_W_X
+    .word T_N_X
+    .word T_E_X
+    .word T_So_X
+    .word T_W_X
+    .word S_N_X
+    .word S_E_X
+    .word S_So_X
+    .word S_W_X
+    .word L_N_X
+    .word L_E_X
+    .word L_So_X
+    .word L_W_X
+
+DRAW_Ay:                        ; address of shape arrays, y_axis
+    .word C_N_Y
+    .word C_E_Y
+    .word C_So_Y
+    .word C_W_Y
+    .word B_N_Y
+    .word B_E_Y
+    .word B_So_Y
+    .word B_W_Y
+    .word T_N_Y
+    .word T_E_Y
+    .word T_So_Y
+    .word T_W_Y
+    .word S_N_Y
+    .word S_E_Y
+    .word S_So_Y
+    .word S_W_Y
+    .word L_N_Y
+    .word L_E_Y
+    .word L_So_Y
+    .word L_W_Y
